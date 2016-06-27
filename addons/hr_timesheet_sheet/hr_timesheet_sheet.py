@@ -514,6 +514,18 @@ class hr_timesheet_sheet_sheet_day(osv.osv):
 
     def init(self, cr):
         cr.execute("""create or replace view hr_timesheet_sheet_sheet_day as
+            -- get employee timezones once
+            WITH tz as (
+                SELECT
+                    e.id as employee_id,
+                    r.user_id,
+                    coalesce(p.tz,'UTC') as timezone
+                FROM hr_employee as e
+                JOIN resource_resource r ON e.resource_id = r.id
+                LEFT JOIN res_users u ON r.user_id = u.id
+                LEFT JOIN res_partner p ON u.partner_id = p.id
+            )
+            -- get the data
             SELECT
                 id,
                 name,
@@ -533,7 +545,7 @@ class hr_timesheet_sheet_sheet_day(osv.osv):
                             THEN (SUM(total_attendance) +
                                 CASE WHEN current_date <> name
                                     THEN 1440
-                                    ELSE (EXTRACT(hour FROM current_time AT TIME ZONE 'UTC' AT TIME ZONE coalesce(timezone, 'UTC')) * 60) + EXTRACT(minute FROM current_time AT TIME ZONE 'UTC' AT TIME ZONE coalesce(timezone, 'UTC'))
+                                    ELSE (EXTRACT(hour FROM current_time AT TIME ZONE 'UTC' AT TIME ZONE timezone) * 60) + EXTRACT(minute FROM current_time AT TIME ZONE 'UTC' AT TIME ZONE timezone)
                                 END
                                 )
                             ELSE SUM(total_attendance)
@@ -542,43 +554,45 @@ class hr_timesheet_sheet_sheet_day(osv.osv):
                         ((
                             select
                                 min(l.id) as id,
-                                p.tz as timezone,
+                                tz.timezone,
                                 l.date::date as name,
                                 s.id as sheet_id,
                                 sum(l.unit_amount) as total_timesheet,
                                 0 as orphan_attendances,
                                 0.0 as total_attendance
                             from
-                            	account_analytic_line l
+                                account_analytic_line l
                                 LEFT JOIN hr_timesheet_sheet_sheet s ON s.id = l.sheet_id
-                                JOIN hr_employee e ON s.employee_id = e.id
-                                JOIN resource_resource r ON e.resource_id = r.id
-                                LEFT JOIN res_users u ON r.user_id = u.id
-                                LEFT JOIN res_partner p ON u.partner_id = p.id
+                                LEFT JOIN tz ON tz.user_id = l.user_id
                             group by l.date::date, s.id, timezone
                         ) union (
                             select
                                 -min(a.id) as id,
-                                p.tz as timezone,
-                                (a.name AT TIME ZONE 'UTC' AT TIME ZONE coalesce(p.tz, 'UTC'))::date as name,
+                                tz.timezone,
+                                (a.name AT TIME ZONE 'UTC' AT TIME ZONE tz.timezone)::date as name,
                                 s.id as sheet_id,
                                 0.0 as total_timesheet,
-                                SUM(CASE WHEN a.action = 'sign_in' THEN -1 ELSE 1 END) as orphan_attendances,
-                                SUM(((EXTRACT(hour FROM (a.name AT TIME ZONE 'UTC' AT TIME ZONE coalesce(p.tz, 'UTC'))) * 60) + EXTRACT(minute FROM (a.name AT TIME ZONE 'UTC' AT TIME ZONE coalesce(p.tz, 'UTC')))) * (CASE WHEN a.action = 'sign_in' THEN -1 ELSE 1 END)) as total_attendance
+                                max(coalesce(o.inum,0)) as orphan_attendances,
+                                SUM(((EXTRACT(hour FROM (a.name AT TIME ZONE 'UTC' AT TIME ZONE tz.timezone          )) * 60) + EXTRACT(minute FROM (a.name AT TIME ZONE 'UTC' AT TIME ZONE tz.timezone          ))) * (CASE WHEN a.action = 'sign_in' THEN -1 ELSE 1 END)) as total_attendance
                             from
                                 hr_attendance a
                                 LEFT JOIN hr_timesheet_sheet_sheet s
                                 ON s.id = a.sheet_id
-                                JOIN hr_employee e
-                                ON a.employee_id = e.id
-                                JOIN resource_resource r
-                                ON e.resource_id = r.id
-                                LEFT JOIN res_users u
-                                ON r.user_id = u.id
-                                LEFT JOIN res_partner p
-                                ON u.partner_id = p.id
+
+                                LEFT JOIN tz ON tz.employee_id = a.employee_id
+                                LEFT JOIN (
+                                    -- orphan_attendance occurs in days where latest action=sign_in
+                                    select
+                                        a.employee_id,
+                                        a.action as o_action,
+                                        (a.name AT TIME ZONE 'UTC' AT TIME ZONE tz.timezone)::date as nameday,
+                                        row_number() over (partition by (a.name AT TIME ZONE 'UTC' AT TIME ZONE tz.timezone)::date, a.employee_id order by a.name desc) as inum
+                                    from hr_attendance as a
+                                    JOIN tz ON tz.employee_id = a.employee_id
+                                ) as o ON o.inum=1 and o.o_action='sign_in' and o.employee_id=a.employee_id and o.nameday=(a.name AT TIME ZONE 'UTC' AT TIME ZONE tz.timezone)::date
                             WHERE action in ('sign_in', 'sign_out')
-                            group by (a.name AT TIME ZONE 'UTC' AT TIME ZONE coalesce(p.tz, 'UTC'))::date, s.id, timezone
+                            group by (a.name AT TIME ZONE 'UTC' AT TIME ZONE tz.timezone)::date, s.id, timezone
+
                         )) AS foo
                         GROUP BY name, sheet_id, timezone
                 )) AS bar""")

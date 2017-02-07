@@ -917,7 +917,7 @@ class product_product(osv.osv):
             result[product.id] = price_extra
         return result
 
-    def _select_seller(self, cr, uid, product_id, partner_id=False, quantity=False, date=None, uom_id=False, context=None):
+    def _select_seller(self, cr, uid, product_id, partner_id=False, quantity=0.0, date=None, uom_id=False, context=None):
         if context is None:
             context = {}
         if date is None:

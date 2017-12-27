@@ -6,6 +6,9 @@ from odoo.addons import decimal_precision as dp
 from odoo.exceptions import UserError
 from odoo.tools import float_utils
 
+import logging
+_logger = logging.getLogger(__name__)
+
 
 class Inventory(models.Model):
     _name = "stock.inventory"
@@ -169,6 +172,7 @@ class Inventory(models.Model):
         # The inventory is posted as a single step which means quants cannot be moved from an internal location to another using an inventory
         # as they will be moved to inventory loss, and other quants will be created to the encoded quant location. This is a normal behavior
         # as quants cannot be reuse from inventory location (users can still manually move the products before/after the inventory if they want).
+        _logger.info("post %d stock moves", len(self))
         self.mapped('move_ids').filtered(lambda move: move.state != 'done').action_done()
 
     @api.multi
@@ -178,9 +182,13 @@ class Inventory(models.Model):
         for inventory in self:
             # first remove the existing stock moves linked to this inventory
             inventory.mapped('move_ids').unlink()
+            line_count = len(inventory.line_ids)
+            line_num = 1
             for line in inventory.line_ids:
                 # compare the checked quantities on inventory lines to the theorical one
+                _logger.info("generate stock move %d/%d (%s)", line_num, line_count, line.product_id.default_code)
                 stock_move = line._generate_moves()
+                line_num += 1
 
     @api.multi
     def action_cancel_draft(self):

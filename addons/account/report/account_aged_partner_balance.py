@@ -34,7 +34,14 @@ class ReportAgedPartnerBalance(models.AbstractModel):
         arg_list = (tuple(move_state), tuple(account_type))
         #build the reconciliation clause to see what partner needs to be printed
         reconciliation_clause = '(l.reconciled IS FALSE)'
-        cr.execute('SELECT debit_move_id, credit_move_id FROM account_partial_reconcile where create_date > %s', (date_from,))
+        cr.execute("""
+            SELECT r.debit_move_id, r.credit_move_id
+            FROM account_partial_reconcile as r
+            left join account_move_line as cl on cl.id=r.credit_move_id
+            left join account_move_line as dl on dl.id=r.debit_move_id
+                where cl.date > %s or dl.date > %s
+            """, (date_from, date_from)
+        )
         reconciled_after_date = []
         for row in cr.fetchall():
             reconciled_after_date += [row[0], row[1]]
@@ -88,10 +95,10 @@ class ReportAgedPartnerBalance(models.AbstractModel):
             if line.balance == 0:
                 continue
             for partial_line in line.matched_debit_ids:
-                if partial_line.create_date[:10] <= date_from:
+                if partial_line.max_date <= date_from:
                     line_amount += partial_line.amount
             for partial_line in line.matched_credit_ids:
-                if partial_line.create_date[:10] <= date_from:
+                if partial_line.max_date <= date_from:
                     line_amount -= partial_line.amount
             if not self.env.user.company_id.currency_id.is_zero(line_amount):
                 undue_amounts[partner_id] += line_amount
@@ -140,10 +147,10 @@ class ReportAgedPartnerBalance(models.AbstractModel):
                 if line.balance == 0:
                     continue
                 for partial_line in line.matched_debit_ids:
-                    if partial_line.create_date[:10] <= date_from:
+                    if partial_line.max_date <= date_from:
                         line_amount += partial_line.amount
                 for partial_line in line.matched_credit_ids:
-                    if partial_line.create_date[:10] <= date_from:
+                    if partial_line.max_date <= date_from:
                         line_amount -= partial_line.amount
 
                 if not self.env.user.company_id.currency_id.is_zero(line_amount):

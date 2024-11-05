@@ -28,6 +28,8 @@ class StockValuationLayerRevaluation(models.TransientModel):
     company_id = fields.Many2one('res.company', "Company", readonly=True, required=True)
     currency_id = fields.Many2one('res.currency', "Currency", related='company_id.currency_id', required=True)
 
+    stock_valuation_layer_id = fields.Many2one('stock.valuation.layer', readonly=True)
+
     product_id = fields.Many2one('product.product', "Related product", required=True, check_company=True)
     property_valuation = fields.Selection(related='product_id.categ_id.property_valuation')
     product_uom_name = fields.Char("Unit of Measure", related='product_id.uom_id.name')
@@ -88,7 +90,7 @@ class StockValuationLayerRevaluation(models.TransientModel):
             remaining_qty -= svl.remaining_qty
 
         previous_value_svl = self.current_value_svl
-        revaluation_svl = self.env['stock.valuation.layer'].create(revaluation_svl_vals)
+        self.stock_valuation_layer_id = self.env['stock.valuation.layer'].create(revaluation_svl_vals)
 
         # Update the stardard price in case of AVCO
         if product_id.categ_id.property_cost_method in ('average', 'fifo'):
@@ -111,7 +113,7 @@ class StockValuationLayerRevaluation(models.TransientModel):
             'journal_id': self.account_journal_id.id or accounts['stock_journal'].id,
             'company_id': self.company_id.id,
             'ref': _("Revaluation of %s", product_id.display_name),
-            'stock_valuation_layer_ids': [(6, None, [revaluation_svl.id])],
+            'stock_valuation_layer_ids': [(6, None, [self.stock_valuation_layer_id.id])],
             'date': self.date or fields.Date.today(),
             'move_type': 'entry',
             'line_ids': [(0, 0, {
